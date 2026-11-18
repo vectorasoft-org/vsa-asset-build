@@ -1,13 +1,18 @@
 # @vsa/asset-build — the VSA asset builder
 
-One builder, installed **once per host**, used by every VSA app on it.
+One builder, **pinned per project**, exactly as a Next.js app pins `next`.
+
+```jsonc
+// a VSA app's package.json
+"dependencies": {
+  "@vsa/asset-build": "https://github.com/vectorasoft-org/lib-asset-build/archive/refs/tags/v1.0.0.tar.gz"
+}
+```
 
 ```
-npm install -g git+ssh://git@github.com/<org>/lib-asset-build.git     ONCE, by hand
-
-vsa-asset-build                directly, in any app root
-php artisan vsa:deploy         a SERVER - it locates the binary on PATH
-vsa build                      a developer's machine, through vsa-cli
+php artisan vsa:deploy    a SERVER: npm ci, then node_modules/.bin/vsa-asset-build
+vsa-asset-build           by hand, in any app root
+vsa build                 a developer's machine, through vsa-cli
 ```
 
 It turns every bundle in `config/script_bundles.php`, every app's stylesheet and
@@ -23,82 +28,32 @@ served the previous release's JS against the new PHP — and every command exite
 0. It is invisible locally, because a developer's `.env` is `ASSET_BUILD=raw` and
 serves the sources directly.
 
-So the server builds. Developers only ever `git add . && git commit && git push`.
+So the server builds. Developers only ever `git add . && git commit && git push`,
+and the builder has to reach a box that has **no vsa-cli and never will**. The
+template forks none of this code: both consumers run this one builder, so a fix
+to the build reaches every project.
 
-That means the builder has to reach a box that has **no vsa-cli and never
-will** — which is what this package is for. The template forks none of this
-code: both consumers run this one builder, so a fix to the build reaches every
-project.
+## This package is PUBLIC, and that is what makes the model simple
 
-## Why it is installed globally, and not per app
+It is a bundler: no secrets, no business logic, no customer data. Being public
+means a deploying box fetches it over plain https with **no credential at all** —
+no SSH key, no registry token, no composer `auth.json`, nothing to rotate.
 
-Because of what `esbuild` is: a **platform-native binary**, which can only be
-installed on the machine that runs it. Copying `node_modules` from a Mac to a
-Linux box produces a build failure that reads like broken source, not a wrong
-binary. So the install happens on the box — and then it may as well happen
-**once** on the box rather than once per app:
+**Pin it as an https tarball url, not `github:<org>/<repo>#tag`.** npm resolves
+that shorthand over `ssh://git@github.com`, which would put an SSH key back on
+every box for a package that needs none. The tarball form is plain https, needs
+no git on the machine, and `package-lock.json` records an **integrity hash** — so
+a moved tag fails loudly instead of quietly changing a build.
 
-* a deploy needs **no credentials at all**. The private-repo access happens once,
-  by hand, at install time — not inside `php artisan vsa:deploy`, which is why
-  there is no npm registry token, no `auth.json` entry and no `insteadOf` token
-  rewrite in `~/.gitconfig` on any VPS.
-* a deploy has **no npm step**: nothing to install, nothing to go stale, no
-  network needed. An app has no `package.json`, no lockfile and no
-  `node_modules`.
-* four apps on one box share one copy of esbuild instead of four.
+A per-project pin also means **esbuild is not the app's dependency**: it arrives
+through this package and is pinned in the app's own lockfile all the same.
+Listing it twice would let two copies at different versions sit in
+`node_modules`.
 
-**The price, and the two things that pay it.** An app can meet a builder that is
-not the one it was developed against, and the directions are not symmetrical:
-
-* **older than the app declares → the deploy REFUSES.** Every app declares a
-  minimum builder version; `php artisan vsa:deploy` names the installed version,
-  the required one and the upgrade command. An old builder can produce a subtly
-  wrong or incomplete bundle while exiting 0, and a warning during a deploy is
-  read by nobody. `vsa-asset-build --version` exists for this check, and must
-  keep answering without a project, a config file or esbuild present.
-* **newer than the app declares → it WARNS and carries on.** A floor cannot
-  protect this direction, and refusing would be worse than the risk: one app's
-  upgrade would block every other app on the host from deploying until each had
-  been bumped in lockstep, which is the coordination this model deletes.
-
-And every build **stamps its own provenance into the manifest**, so the question
-a shared tool raises - what is this box actually serving, app by app? - is
-answered on the box:
-
-```json
-{
-  "generated": "2026-11-18T12:22:03.592Z",
-  "builder": { "name": "vsa-asset-build", "version": "1.0.0" },
-  "scripts": { "kge-base": { "built": "...", "by": "1.0.0", "parts": [ ... ] } }
-}
-```
-
-`builder` is the build that wrote the manifest; `by` on each entry is the version
-that produced THAT bundle, which survives a single-app rebuild merging into an
-older manifest. Neither gates anything. Both are safe to add because every
-reader does a keyed lookup (`manifest['scripts'][$bundle]`,
-`manifest['pages']["$app/$name"]`) and nothing iterates the manifest root, so a
-new top-level key can never be mistaken for a bundle.
-
-## Installing it
-
-```bash
-# a server, or any machine: straight from the repo
-npm install -g git+ssh://git@github.com/<org>/lib-asset-build.git
-
-# from a local checkout - note the flag
-npm install -g --install-links .
-```
-
-**`--install-links` is not optional for a folder install.** Without it npm
-installs this package and *none of its dependencies* ("added 1 package"), so the
-binary lands on PATH, answers `--version`, and then fails on the first build
-with esbuild missing. Verify an install, always:
-
-```bash
-vsa-asset-build --version                   # the version apps check against
-vsa-asset-build --root=/srv/app --no-publish  # a real build that writes nothing
-```
+An earlier design installed one builder per HOST, shared by every app on it. That
+needed a minimum-version floor, a skew warning, an install by hand on every box
+and a "redeploy every app after upgrading" procedure — machinery that existed
+only because the apps shared one tool. Pinning per project deleted all of it.
 
 ## Requirements on the box
 
@@ -109,13 +64,17 @@ vsa-asset-build --root=/srv/app --no-publish  # a real build that writes nothing
   gitignored, so a failure there is **fatal** — a build that cannot regenerate
   them has nothing to fall back on.
 
+`esbuild` is a **platform-native binary**, so `node_modules` is installed on the
+machine that runs it and never copied from a Mac (`darwin-arm64` cannot run on
+Linux, and the failure reads as a broken build rather than a wrong binary).
+
 ## Use
 
 ```bash
 vsa-asset-build                                 # build and publish, from the app root
 vsa-asset-build --root=/srv/app                 # what php artisan vsa:deploy runs
 vsa-asset-build --root=/srv/app --no-publish    # would it build? writes nothing
-vsa-asset-build --version                       # the version an app's floor is checked against
+vsa-asset-build --version
 ```
 
 ```js
@@ -133,15 +92,34 @@ the chunks the new manifest no longer references — by this build's own naming
 (`<stem>.<10 hex>.js`) and nothing else, because `public/dist` is not the
 build's private directory (some projects keep hand-written files there).
 
+## Provenance in the manifest
+
+Every build records which builder produced what, so the question can be answered
+on the box, without a checkout:
+
+```json
+{
+  "generated": "2026-11-18T12:22:03.592Z",
+  "builder": { "name": "vsa-asset-build", "version": "1.0.0" },
+  "scripts": { "kge-base": { "built": "...", "by": "1.0.0", "parts": [ ... ] } }
+}
+```
+
+`builder` is the build that wrote the manifest; `by` on each entry is the version
+that produced THAT bundle, which survives a single-app rebuild merging into an
+older manifest. Neither gates anything. Both are safe to add because every reader
+does a keyed lookup (`manifest['scripts'][$bundle]`,
+`manifest['pages']["$app/$name"]`) and nothing iterates the manifest root, so a
+new top-level key can never be mistaken for a bundle.
+
 ## What is NOT here
 
 The structural rules (`vsa check`, `checks/`) are a developer's concern and stay
 in vsa-cli. A consumer that wants them passes a runner in as `opts.onCheck`.
 
-There is no PHP side. An earlier design shipped this as a composer package
-(`vsd/asset-build`) with an `AssetBuild.php` helper, installed per app into
-`vendor/`; the global install replaced it, so a VSA app's `composer.json`
-mentions the builder nowhere.
+There is no PHP side: an earlier design shipped this as a composer package
+(`vsd/asset-build`) with an `AssetBuild.php` helper. The composer channel is
+closed, so a VSA app's `composer.json` mentions the builder nowhere.
 
 ## Layout
 
@@ -152,15 +130,23 @@ lib/context.js      the project context, injected (never discovered twice)
 lib/build.js        the build itself
 lib/swap.js         build elsewhere, publish only on success
 lib/host/           the project layout; laravel.js reads the PHP config as data
-lib/report.js       colours  ) copies on purpose: this package must stand alone,
-lib/codes.js        normCode )  installed globally with no CLI present
+lib/report.js       colours  ) copies on purpose: this package must stand alone
+lib/codes.js        normCode )  in a project's node_modules, with no CLI present
 ```
+
+## Releasing a new version
+
+1. bump `version` in `package.json` (it is what the manifest stamps), commit;
+2. tag it `vX.Y.Z` and push the tag — the tag is what apps pin;
+3. in each app that wants it: edit the url in `package.json`, `npm install`,
+   commit the lockfile, deploy. One app at a time, visibly, in git.
 
 ## Consuming it from vsa-cli
 
-vsa-cli resolves it three ways, so no machine can end up with a CLI that cannot
-find it (`lib/asset-build.js`): `node_modules`, then `vendor/asset-build` bundled
-into the published CLI by `scripts/build-dist.js`, then a `../lib-asset-build`
-sibling checkout. A developer's Mac may therefore get its builder from vsa-cli
-rather than from a global install — but `php artisan vsa:deploy` never does: its
-path to the builder must not depend on vsa-cli being present at all.
+vsa-cli resolves it four ways (`lib/asset-build.js`), in this order: the
+**project's** `node_modules` first — what the project pins and what its server
+will build with — then the CLI's own dependency, then `vendor/asset-build`
+bundled into the published CLI by `scripts/build-dist.js` (`~/.vsa/cli` is a git
+clone with no `npm install` behind it), then a `../lib-asset-build` sibling
+checkout. `php artisan vsa:deploy` uses none of that: it runs the project's own
+pinned binary, and must never depend on vsa-cli being present.
