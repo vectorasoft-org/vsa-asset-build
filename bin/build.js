@@ -1,10 +1,23 @@
 #!/usr/bin/env node
 'use strict';
 /*
- | THE SERVER'S WAY IN. `php artisan vsa:deploy` runs this, out of
- | vendor/vsd/asset-build, on a box that has no vsa-cli and never will:
+ | THE STABLE BINARY: `vsa-asset-build`. It is installed ONCE PER HOST
  |
- |   node vendor/vsd/asset-build/bin/build.js [app] [options] [--root=<dir>]
+ |   npm install -g <this repo>
+ |
+ | and every VSA app on that host uses it - `php artisan vsa:deploy` locates it
+ | on PATH, and you can run it by hand from an app root to rebuild that app.
+ | Nothing is installed per app: no composer dependency, no node_modules, no
+ | npm step in a deploy. The private-repo access happens once, by hand, at
+ | install time, so a deploy needs no credential of any kind.
+ |
+ | The price of ONE shared tool for several apps is that nothing stops an app
+ | from meeting a builder older than it needs - so every app declares a minimum
+ | version and `php artisan vsa:deploy` refuses below it. That is what
+ | --version is for, and why it must keep working exactly as it does here.
+ |
+ |   vsa-asset-build [app] [options] [--root=<dir>]
+ |   vsa-asset-build --version        the version the app's floor is compared to
  |
  |     --root=<dir>     the project (default: VSA_ROOT, else the nearest folder
  |                      upwards holding a vsa.json)
@@ -16,14 +29,25 @@
  | By default it PUBLISHES: builds elsewhere, and copies into public/dist only
  | after a complete success, manifest last (lib/swap.js says why).
  |
- | It needs esbuild in the PROJECT's node_modules - `npm ci` there - and php on
- | the PATH, because the project's bundle lists are PHP files read as data.
+ | It brings its own esbuild (pinned in this package's package-lock.json, once
+ | per host instead of once per app) and needs php on the PATH, because the
+ | project's bundle lists are PHP files read as data.
  */
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const args = process.argv.slice(2);
+
+/*
+ | --version first, and on its own: `php artisan vsa:deploy` runs it as its
+ | version check, so it must answer without a project, without a config file
+ | and without esbuild - one bare semver line on stdout, nothing else.
+ */
+if (args.includes('--version') || args.includes('-V')) {
+    console.log(require('../package.json').version);
+    process.exit(0);
+}
 let rootArg = null;
 let publish = true;
 const pass = [];
@@ -31,7 +55,8 @@ for (const a of args) {
     if (a.startsWith('--root=')) rootArg = a.slice(7);
     else if (a === '--no-publish') publish = false;
     else if (a === '-h' || a === '--help') {
-        console.log('usage: node bin/build.js [app] [--root=<dir>] [--no-publish] [--no-minify] [--no-sourcemap]');
+        console.log('usage: vsa-asset-build [app] [--root=<dir>] [--no-publish] [--no-minify] [--no-sourcemap]');
+        console.log('       vsa-asset-build --version');
         process.exit(2);
     } else pass.push(a);
 }

@@ -1,10 +1,13 @@
-# vsd/asset-build — the VSA asset builder
+# @vsa/asset-build — the VSA asset builder
 
-One builder, two consumers.
+One builder, installed **once per host**, used by every VSA app on it.
 
 ```
-vsa build                     a developer's machine, through vsa-cli
-php artisan vsa:deploy        a SERVER, through vendor/vsd/asset-build
+npm install -g git+ssh://git@github.com/<org>/lib-asset-build.git     ONCE, by hand
+
+vsa-asset-build                directly, in any app root
+php artisan vsa:deploy         a SERVER - it locates the binary on PATH
+vsa build                      a developer's machine, through vsa-cli
 ```
 
 It turns every bundle in `config/script_bundles.php`, every app's stylesheet and
@@ -12,7 +15,7 @@ every page's script and stylesheet into **content-hashed, minified chunks** unde
 `public/dist`, plus a `manifest.json` the app shell reads. CDN urls are recorded
 where they stand and never downloaded.
 
-## Why it is a package
+## Why it is a package of its own
 
 `public/dist` used to be **committed**, built on a developer's Mac by
 `vsa release`. The day someone pushed source without running it, the server
@@ -24,45 +27,77 @@ So the server builds. Developers only ever `git add . && git commit && git push`
 
 That means the builder has to reach a box that has **no vsa-cli and never
 will** — which is what this package is for. The template forks none of this
-code: a project depends on it, so a fix to the build reaches every project.
+code: both consumers run this one builder, so a fix to the build reaches every
+project.
 
-## How it gets to a server, with no new credentials
+## Why it is installed globally, and not per app
 
-| what | private? | channel |
-|---|---|---|
-| this package | yes | **composer**, a `"type": "vcs"` repo beside the other `vsd/*` — the box already has the `auth.json` credential |
-| esbuild | **no**, public on npm | `npm ci` in the **project root** |
+Because of what `esbuild` is: a **platform-native binary**, which can only be
+installed on the machine that runs it. Copying `node_modules` from a Mac to a
+Linux box produces a build failure that reads like broken source, not a wrong
+binary. So the install happens on the box — and then it may as well happen
+**once** on the box rather than once per app:
 
-No git credentials on the VPS, no private npm registry, no token in
-`~/.gitconfig`.
+* a deploy needs **no credentials at all**. The private-repo access happens once,
+  by hand, at install time — not inside `php artisan vsa:deploy`, which is why
+  there is no npm registry token, no `auth.json` entry and no `insteadOf` token
+  rewrite in `~/.gitconfig` on any VPS.
+* a deploy has **no npm step**: nothing to install, nothing to go stale, no
+  network needed. An app has no `package.json`, no lockfile and no
+  `node_modules`.
+* four apps on one box share one copy of esbuild instead of four.
 
-`esbuild` is a **platform-native binary**, so it is installed on the box that
-runs it — never copied from a Mac (`darwin-arm64` cannot run on Linux, and the
-failure reads as a broken build rather than a wrong binary).
+**The price, and the thing that pays it.** Nothing stops an app from meeting a
+builder older than it needs. So every app declares a **minimum builder version**
+and `php artisan vsa:deploy` refuses below it, naming the installed version, the
+required one and the upgrade command. That version floor is the only thing
+standing between one shared global tool and several apps silently getting
+whatever happens to be installed. `vsa-asset-build --version` exists for it, and
+must keep answering without a project, a config file or esbuild present.
 
-`node_modules` must live in the **project root**, never under `vendor/`:
-`composer install` rewrites `vendor/` on every deploy and would take it along.
+## Installing it
+
+```bash
+# a server, or any machine: straight from the repo
+npm install -g git+ssh://git@github.com/<org>/lib-asset-build.git
+
+# from a local checkout - note the flag
+npm install -g --install-links .
+```
+
+**`--install-links` is not optional for a folder install.** Without it npm
+installs this package and *none of its dependencies* ("added 1 package"), so the
+binary lands on PATH, answers `--version`, and then fails on the first build
+with esbuild missing. Verify an install, always:
+
+```bash
+vsa-asset-build --version                   # the version apps check against
+vsa-asset-build --root=/srv/app --no-publish  # a real build that writes nothing
+```
 
 ## Requirements on the box
 
 * **Node >= 18** (npm ships inside it)
 * **PHP** — the bundle lists are PHP files, read as data (`php -r 'echo json_encode(require ...)'`)
-* **artisan**, when the app can boot: the build re-projects the per-page cluster
-  configs first (`php artisan vsa:pages:sync`), so a build can never ship a stale
-  cluster. Best-effort — it warns and builds from the committed files otherwise.
+* **artisan**, which must boot: the build re-projects the per-page cluster
+  configs first (`php artisan vsa:pages:sync`). Those configs are build output,
+  gitignored, so a failure there is **fatal** — a build that cannot regenerate
+  them has nothing to fall back on.
 
 ## Use
+
+```bash
+vsa-asset-build                                 # build and publish, from the app root
+vsa-asset-build --root=/srv/app                 # what php artisan vsa:deploy runs
+vsa-asset-build --root=/srv/app --no-publish    # would it build? writes nothing
+vsa-asset-build --version                       # the version an app's floor is checked against
+```
 
 ```js
 const ab = require('@vsa/asset-build');
 ab.configure({ ROOT, config });   // the project folder and its vsa.json
 ab.publish(['dms']);              // build elsewhere, move into public/dist on success
 ab.build(['dms']);                // build only, straight to where it is told
-```
-
-```bash
-node bin/build.js --root=/srv/app              # build and publish (what a deploy runs)
-node bin/build.js --root=/srv/app --no-publish  # would it build? writes nothing
 ```
 
 `publish()` is the atomic one, and a deploy always wants it: `public/dist` is
@@ -78,18 +113,22 @@ build's private directory (some projects keep hand-written files there).
 The structural rules (`vsa check`, `checks/`) are a developer's concern and stay
 in vsa-cli. A consumer that wants them passes a runner in as `opts.onCheck`.
 
+There is no PHP side. An earlier design shipped this as a composer package
+(`vsd/asset-build`) with an `AssetBuild.php` helper, installed per app into
+`vendor/`; the global install replaced it, so a VSA app's `composer.json`
+mentions the builder nowhere.
+
 ## Layout
 
 ```
 index.js            configure / build / publish
-bin/build.js        the server's entry point, run by php artisan vsa:deploy
+bin/build.js        the vsa-asset-build binary
 lib/context.js      the project context, injected (never discovered twice)
 lib/build.js        the build itself
 lib/swap.js         build elsewhere, publish only on success
 lib/host/           the project layout; laravel.js reads the PHP config as data
-lib/report.js       colours  ) copies on purpose: this package must stand alone
-lib/codes.js        normCode )  in vendor/, with no CLI present
-src/AssetBuild.php  the PHP side: where things are, and whether this box can run them
+lib/report.js       colours  ) copies on purpose: this package must stand alone,
+lib/codes.js        normCode )  installed globally with no CLI present
 ```
 
 ## Consuming it from vsa-cli
@@ -97,8 +136,6 @@ src/AssetBuild.php  the PHP side: where things are, and whether this box can run
 vsa-cli resolves it three ways, so no machine can end up with a CLI that cannot
 find it (`lib/asset-build.js`): `node_modules`, then `vendor/asset-build` bundled
 into the published CLI by `scripts/build-dist.js`, then a `../lib-asset-build`
-sibling checkout.
-
-Once this repo is pushed, add it to vsa-cli's `package.json` as a git dependency
-and commit the refreshed lockfile; the bundling above means nothing breaks in the
-meantime.
+sibling checkout. A developer's Mac may therefore get its builder from vsa-cli
+rather than from a global install — but `php artisan vsa:deploy` never does: its
+path to the builder must not depend on vsa-cli being present at all.
