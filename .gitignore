@@ -1,0 +1,18 @@
+/node_modules
+npm-debug.log
+.DS_Store
+
+
+# ==========================================================
+# CLAUDE / AI TOOLING
+# ==========================================================
+.claude/
+.claude.json
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
+private/tmp/
+**/claude-501/
+.aider*
+.cursor/
+.continue/

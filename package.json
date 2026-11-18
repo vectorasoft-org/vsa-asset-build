@@ -1,0 +1,16 @@
+{
+  "name": "@vsa/asset-build",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The VSA asset builder: content-hashed, minified chunks + manifest for a VSA Monolith app. One implementation, used by vsa-cli and by `php artisan vsa:deploy` on a server.",
+  "main": "index.js",
+  "bin": {
+    "vsa-asset-build": "bin/build.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
