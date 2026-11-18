@@ -47,13 +47,38 @@ binary. So the install happens on the box — and then it may as well happen
   `node_modules`.
 * four apps on one box share one copy of esbuild instead of four.
 
-**The price, and the thing that pays it.** Nothing stops an app from meeting a
-builder older than it needs. So every app declares a **minimum builder version**
-and `php artisan vsa:deploy` refuses below it, naming the installed version, the
-required one and the upgrade command. That version floor is the only thing
-standing between one shared global tool and several apps silently getting
-whatever happens to be installed. `vsa-asset-build --version` exists for it, and
-must keep answering without a project, a config file or esbuild present.
+**The price, and the two things that pay it.** An app can meet a builder that is
+not the one it was developed against, and the directions are not symmetrical:
+
+* **older than the app declares → the deploy REFUSES.** Every app declares a
+  minimum builder version; `php artisan vsa:deploy` names the installed version,
+  the required one and the upgrade command. An old builder can produce a subtly
+  wrong or incomplete bundle while exiting 0, and a warning during a deploy is
+  read by nobody. `vsa-asset-build --version` exists for this check, and must
+  keep answering without a project, a config file or esbuild present.
+* **newer than the app declares → it WARNS and carries on.** A floor cannot
+  protect this direction, and refusing would be worse than the risk: one app's
+  upgrade would block every other app on the host from deploying until each had
+  been bumped in lockstep, which is the coordination this model deletes.
+
+And every build **stamps its own provenance into the manifest**, so the question
+a shared tool raises - what is this box actually serving, app by app? - is
+answered on the box:
+
+```json
+{
+  "generated": "2026-11-18T12:22:03.592Z",
+  "builder": { "name": "vsa-asset-build", "version": "1.0.0" },
+  "scripts": { "kge-base": { "built": "...", "by": "1.0.0", "parts": [ ... ] } }
+}
+```
+
+`builder` is the build that wrote the manifest; `by` on each entry is the version
+that produced THAT bundle, which survives a single-app rebuild merging into an
+older manifest. Neither gates anything. Both are safe to add because every
+reader does a keyed lookup (`manifest['scripts'][$bundle]`,
+`manifest['pages']["$app/$name"]`) and nothing iterates the manifest root, so a
+new top-level key can never be mistaken for a bundle.
 
 ## Installing it
 
