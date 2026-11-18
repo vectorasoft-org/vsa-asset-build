@@ -1,11 +1,11 @@
-# @vsa/asset-build — the VSA asset builder
+# vsa-asset-build — the VSA asset builder
 
 One builder, **pinned per project**, exactly as a Next.js app pins `next`.
 
 ```jsonc
 // a VSA app's package.json
 "dependencies": {
-  "@vsa/asset-build": "https://github.com/vectorasoft-org/lib-asset-build/archive/refs/tags/v1.0.0.tar.gz"
+  "vsa-asset-build": "https://github.com/vectorasoft-org/vsa-asset-build/archive/refs/tags/v1.0.0.tar.gz"
 }
 ```
 
@@ -78,7 +78,7 @@ vsa-asset-build --version
 ```
 
 ```js
-const ab = require('@vsa/asset-build');
+const ab = require('vsa-asset-build');
 ab.configure({ ROOT, config });   // the project folder and its vsa.json
 ab.publish(['dms']);              // build elsewhere, move into public/dist on success
 ab.build(['dms']);                // build only, straight to where it is told
@@ -147,6 +147,7 @@ vsa-cli resolves it four ways (`lib/asset-build.js`), in this order: the
 **project's** `node_modules` first — what the project pins and what its server
 will build with — then the CLI's own dependency, then `vendor/asset-build`
 bundled into the published CLI by `scripts/build-dist.js` (`~/.vsa/cli` is a git
-clone with no `npm install` behind it), then a `../lib-asset-build` sibling
-checkout. `php artisan vsa:deploy` uses none of that: it runs the project's own
+clone with no `npm install` behind it), then a `../vsa-asset-build` sibling
+checkout (or `../lib-asset-build`, the folder name from before the repository was
+renamed). `php artisan vsa:deploy` uses none of that: it runs the project's own
 pinned binary, and must never depend on vsa-cli being present.

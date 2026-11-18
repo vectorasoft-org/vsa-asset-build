@@ -11,7 +11,7 @@
  | The template forks none of this: there is one builder, and a project gets it
  | as a dependency.
  |
- |   const ab = require('@vsa/asset-build');
+ |   const ab = require('vsa-asset-build');
  |   ab.configure({ ROOT, config });     // the project folder and its vsa.json
  |   ab.publish(['dms']);                // build, then publish on success
  |   ab.build(['dms', '--out=/tmp/x']);  // build only, no publish
